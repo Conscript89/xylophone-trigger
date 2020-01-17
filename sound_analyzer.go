@@ -43,7 +43,16 @@ ranges := map[string]freqRange{
 
 var recordData audioData
 
-func drawBar(surface *sdl.Surface, width int32, height int32, bars int32, index int32, maxValue float32, value float32) {
+func drawBar(surface *sdl.Surface, width int32, height int32, bars int32, index int32, maxValue float32, value float32, peak bool) {
+	var scales = []int32{100, 10, 5, 2}
+	var scale int32
+	for _, potentialScale := range scales {
+		scale = potentialScale
+		if bars / potentialScale > 5 {
+			break
+		}
+	}
+
 	w := (int32)(width / bars)
 	if w <= 0 {
 		w = (int32)(1)
@@ -55,10 +64,20 @@ func drawBar(surface *sdl.Surface, width int32, height int32, bars int32, index 
 		h = -h
 		y = height
 	}
+	if index % scale == 0 {
+		ref_rect := sdl.Rect{x, 0, w, height}
+		surface.FillRect(&ref_rect, sdl.Color{255, 0, 255, 0}.Uint32())
+	}
 	rect := sdl.Rect{x, y, w, (int32)(h)}
 	//rect := sdl.Rect{offset, height - (int32)(h), 2, 2}
 	//fmt.Printf("Rect: %v\n", rect)
 	surface.FillRect(&rect, sdl.Color{255, 255, 0, 0}.Uint32())
+	if peak {
+		rect.X = rect.X - 5
+		rect.W = 10
+		rect.H = 1
+		surface.FillRect(&rect, sdl.Color{255, 255, 255, 0}.Uint32())
+	}
 }
 
 func magnitude(item complex128) float64 {
@@ -100,13 +119,26 @@ func freqToIndex(freq int, samples int, rate int) int {
 	return (int)(math.Floor(f*s/r))
 }
 
-func drawBars(surface *sdl.Surface, width int32, height int32) {
+func displayData() []float32 {
 	// locks
 	recordData.mux.Lock()
 	defer recordData.mux.Unlock()
+	data := make([]float32, 2048/2)
+	for i, _ := range(data) {
+		data[i] = displayAvgMagnitude(i)
+	}
+	return data
+}
+
+func isPeak(data []float32, i int) bool {
+	return data[i] > 2 && data[i] >= data[i-1] && data[i] >= data[i+1]
+}
+
+func drawBars(surface *sdl.Surface, width int32, height int32) {
 	// continue with code
 	var maximum float64
 	var magnitude float32
+	data := displayData()
 	from := 0
 	to := 2048/2 - 1
 	//from = freqToIndex(350, 2048, 44100)
@@ -116,15 +148,17 @@ func drawBars(surface *sdl.Surface, width int32, height int32) {
 	//to = 255
 	//from = 46
 	//to = 52
+
 	bars := to - from
 	maximum = 0
 	for i := from; i < to; i++ {
-		magnitude = displayMinMagnitude(i)
+		magnitude = data[i]
 		maximum = math.Max(maximum, (float64)(magnitude))
 		drawBar(
 			surface, width, height,
 			(int32)(bars), (int32)(i - from),
 			(float32)(100), magnitude,
+			isPeak(data, i),
 		)
 	}
 	fmt.Printf("Detected maximum: %v\n", maximum)
