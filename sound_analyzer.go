@@ -12,6 +12,7 @@ import (
 	"sync"
 	"math"
 	"github.com/veandco/go-sdl2/sdl"
+	"github.com/veandco/go-sdl2/ttf"
 	"github.com/jvlmdr/go-fftw/fftw"
 )
 
@@ -22,26 +23,19 @@ type audioData struct {
 	counter int
 }
 
-/*
-type freqRange struct {
-	min int,
-	max int,
-    treshold float64,
+type Peak struct {
+    index int
+    magnitude float64
 }
 
-ranges := map[string]freqRange{
-	"c" : {46, 52, 20},
-	"d" : {0, 0, 0},
-	"e" : {0, 0, 0},
-	"f" : {0, 0, 0},
-	"g" : {0, 0, 0},
-	"a" : {0, 0, 0},
-	"b" : {0, 0, 0},
-	"c" : {0, 0, 0},
+type Stats struct {
+	maximum float64
+	peaks []Peak
 }
-*/
 
 var recordData audioData
+var peaks map[string][]Peak
+var font *ttf.Font
 
 func drawBar(surface *sdl.Surface, width int32, height int32, bars int32, index int32, maxValue float32, value float32, peak bool) {
 	var scales = []int32{100, 10, 5, 2}
@@ -134,7 +128,7 @@ func isPeak(data []float32, i int) bool {
 	return data[i] > 2 && data[i] >= data[i-1] && data[i] >= data[i+1]
 }
 
-func drawBars(surface *sdl.Surface, width int32, height int32) {
+func drawBars(surface *sdl.Surface, width int32, height int32) float64 {
 	// continue with code
 	var maximum float64
 	var magnitude float32
@@ -161,10 +155,18 @@ func drawBars(surface *sdl.Surface, width int32, height int32) {
 			isPeak(data, i),
 		)
 	}
-	fmt.Printf("Detected maximum: %v\n", maximum)
+	return maximum
 }
 
-func mainloop(mainWindow *sdl.Window, recordDevice sdl.AudioDeviceID) {
+func printStats(surface *sdl.Surface, stats Stats) {
+	text := fmt.Sprintf("Detected maximum: %v", stats.maximum)
+	rendered, _ := font.RenderUTF8Solid(text, sdl.Color{255, 255, 0, 0})
+	src := sdl.Rect{0, 0, rendered.W, rendered.H}
+	dst := sdl.Rect{0, 0, surface.W, surface.H}
+	rendered.Blit(&src, surface, &dst)
+}
+
+func mainloop(mainWindow *sdl.Window, recordDevice sdl.AudioDeviceID, stats Stats) {
 	w, h := mainWindow.GetSize()
 	everything := sdl.Rect{0, 0, w, h}
 	surface, _ := mainWindow.GetSurface()
@@ -201,7 +203,8 @@ func mainloop(mainWindow *sdl.Window, recordDevice sdl.AudioDeviceID) {
 				sdl.Color{255, 0, 0, 0}.Uint32(),
 			)
 			// draw bar
-			drawBars(surface, w, h)
+			stats.maximum = drawBars(surface, w, h)
+			printStats(surface, stats)
 			// update window
 			mainWindow.UpdateSurface()
 			//fmt.Printf("%v iteration\n", i)
@@ -265,20 +268,37 @@ func main() {
 	var error error
 	var mainWindow *sdl.Window
 	var audioDevice sdl.AudioDeviceID
+	var stats Stats
 	recordData.size = 3
 	recordData.counter = 0
 	recordData.values = make([]*fftw.Array, recordData.size)
+	peaks = map[string][]Peak{
+		"c" : make([]Peak, 0, 5),
+		"d" : make([]Peak, 0, 5),
+		"e" : make([]Peak, 0, 5),
+		"f" : make([]Peak, 0, 5),
+		"g" : make([]Peak, 0, 5),
+		"a" : make([]Peak, 0, 5),
+		"b" : make([]Peak, 0, 5),
+	}
+
 	for i := 0; i < recordData.size; i++ {
 		recordData.values[i] = fftw.NewArray(2048)
 	}
 	error = sdl.Init(sdl.INIT_VIDEO | sdl.INIT_AUDIO)
-	printAudioRecordDevices()
 	fmt.Printf("error: %v\n", error)
+	if ! ttf.WasInit() {
+		error = ttf.Init()
+	}
+	fmt.Printf("error: %v\n", error)
+	printAudioRecordDevices()
 	mainWindow, error = sdl.CreateWindow("", sdl.WINDOWPOS_CENTERED, sdl.WINDOWPOS_CENTERED, 2048, 1080, 0)
 	fmt.Printf("error: %v\n", error)
 	//audioDevice, error = openRecordDevice(0)
 	audioDevice, error = openRecordDevice(0)
 	fmt.Printf("error: %v\n", error)
-	mainloop(mainWindow, audioDevice)
+	font, error = ttf.OpenFont("Sans.ttf", 12)
+	fmt.Printf("error: %v\n", error)
+	mainloop(mainWindow, audioDevice, stats)
 	sdl.Quit()
 }
