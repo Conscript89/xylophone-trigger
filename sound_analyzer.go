@@ -139,7 +139,7 @@ func drawBars(surface *sdl.Surface, width int32, height int32) {
 	var maximum float64
 	var magnitude float32
 	data := displayData()
-	from := 0
+	from := 1
 	to := 2048/2 - 1
 	//from = freqToIndex(350, 2048, 44100)
 	//to = freqToIndex(450, 2048, 44100)
