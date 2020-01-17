@@ -23,6 +23,34 @@ type audioData struct {
 	counter int
 }
 
+func (data audioData) maxMagnitude(i int) float32 {
+	var item float64 = 0
+	for j := 0; j < data.size; j++ {
+		item = math.Max(item, magnitude(data.values[j].Elems[i]))
+	}
+	return (float32)(item)
+}
+
+func (data audioData) minMagnitude(i int) float32 {
+	var item float64 = math.Inf(1)
+	for j := 0; j < data.size; j++ {
+		item = math.Min(item, magnitude(data.values[j].Elems[i]))
+	}
+	return (float32)(item)
+}
+
+func (data audioData) sumMagnitude(i int) float32 {
+	var sum float64 = 0
+	for j := 0; j < data.size; j++ {
+		sum += magnitude(data.values[j].Elems[i])
+	}
+	return (float32)(sum)
+}
+
+func (data audioData) avgMagnitude(i int) float32 {
+	return data.sumMagnitude(i) / (float32)(data.size)
+}
+
 type Peak struct {
     index int
     magnitude float64
@@ -78,34 +106,6 @@ func magnitude(item complex128) float64 {
 	return math.Sqrt((float64)(real(item)*real(item) + imag(item)*imag(item)))
 }
 
-func displayMaxMagnitude(i int) float32 {
-	var item float64 = 0
-	for j := 0; j < recordData.size; j++ {
-		item = math.Max(item, magnitude(recordData.values[j].Elems[i]))
-	}
-	return (float32)(item)
-}
-
-func displayMinMagnitude(i int) float32 {
-	var item float64 = math.Inf(1)
-	for j := 0; j < recordData.size; j++ {
-		item = math.Min(item, magnitude(recordData.values[j].Elems[i]))
-	}
-	return (float32)(item)
-}
-
-func displaySumMagnitude(i int) float32 {
-	var sum float64 = 0
-	for j := 0; j < recordData.size; j++ {
-		sum += magnitude(recordData.values[j].Elems[i])
-	}
-	return (float32)(sum)
-}
-
-func displayAvgMagnitude(i int) float32 {
-	return displaySumMagnitude(i) / (float32)(recordData.size)
-}
-
 func freqToIndex(freq int, samples int, rate int) int {
 	f := (float64)(freq)
 	s := (float64)(samples)
@@ -119,7 +119,7 @@ func displayData() []float32 {
 	defer recordData.mux.Unlock()
 	data := make([]float32, 2048/2)
 	for i, _ := range(data) {
-		data[i] = displayAvgMagnitude(i)
+		data[i] = recordData.avgMagnitude(i)
 	}
 	return data
 }
