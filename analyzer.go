@@ -15,6 +15,7 @@ import (
 	"sync"
 	"math"
 	"github.com/veandco/go-sdl2/sdl"
+	"github.com/veandco/go-sdl2/ttf"
 	"github.com/jvlmdr/go-fftw/fftw"
 )
 
@@ -26,6 +27,7 @@ type Options struct {
 	historySize int
 	interval int
 	minPeakValue float64
+	topPeaks int
 }
 
 type DisplaySettings struct {
@@ -82,6 +84,7 @@ type Gui struct {
 	window *sdl.Window
 	surface *sdl.Surface
 	settings DisplaySettings
+	font *ttf.Font
 }
 
 func (gui *Gui) barWidth() int32 {
@@ -157,6 +160,31 @@ func (gui *Gui) drawScales() {
 	}
 }
 
+func (gui *Gui) printAt(dst sdl.Rect, format string, args ...interface{}) sdl.Rect {
+	text_color := sdl.Color{255, 255, 255, 255}
+	text := fmt.Sprintf(format, args...)
+	rendered, _ := gui.font.RenderUTF8Solid(text, text_color)
+	src := sdl.Rect{0, 0, rendered.W, rendered.H}
+	dst.W, dst.H = rendered.W, rendered.H
+	rendered.Blit(&src, gui.surface, &dst)
+	dst.Y += dst.H
+	return dst
+}
+
+func (gui *Gui) printInfo(data *AggregatedData) {
+	bgColor := sdl.Color{255, 10, 10, 10}.Uint32()
+	dst := sdl.Rect{5, 5, 200, 200}
+	gui.surface.FillRect(&dst, bgColor)
+	dst.X += 5
+	dst.Y += 5
+	dst = gui.printAt(dst, "Peaks: %d", len(data.peaks))
+	dst = gui.printAt(dst, "Max peak: %v", data.maxPeak())
+	dst = gui.printAt(dst, "Top peaks:")
+	for _, peak := range data.topPeaks {
+		dst = gui.printAt(dst, "%v", peak)
+	}
+}
+
 func (gui *Gui) flip() {
 	gui.window.UpdateSurface()
 }
@@ -169,11 +197,13 @@ type Peak struct {
 type AggregatedData struct {
 	values []float64
 	peaks []Peak
+	topPeaks []Peak
 }
 
 func (data *AggregatedData) init(options Options) {
 	data.values = make([]float64, options.samples/2)
 	data.peaks = make([]Peak, 0, options.samples/2)
+	data.topPeaks = make([]Peak, 0, options.topPeaks)
 }
 
 func (data *AggregatedData) update(src *AudioData) {
@@ -187,22 +217,65 @@ func (data *AggregatedData) update(src *AudioData) {
 }
 
 func (data *AggregatedData) updatePeaks(minPeakValue float64) {
+	var peak Peak
+	var value float64
 	// delete peaks first
 	data.peaks = make([]Peak, 0, cap(data.peaks))
+	data.topPeaks = make([]Peak, 0, cap(data.topPeaks))
 	prev := math.Inf(-1)
 	next := math.Inf(-1)
 	maxIndex := len(data.values)-1
-	for i, value := range data.values {
+	for i := 1; i <= maxIndex; i++ {
+		value = data.values[i]
 		if i >= maxIndex {
 			next = math.Inf(-1)
 		} else {
 			next = data.values[i+1]
 		}
-		if i >= 1 && value >= minPeakValue && value > prev && value > next {
-			data.peaks = append(data.peaks, Peak{i, value})
+		if value >= minPeakValue && value > prev && value > next {
+			// register peak
+			peak = Peak{i, value}
+			data.peaks = append(data.peaks, peak)
+			// update top peaks
+			if len(data.topPeaks) == 0 {
+				// initial topPeak
+				data.topPeaks = append(data.topPeaks, peak)
+			} else if len(data.topPeaks) < cap(data.topPeaks) {
+				// fill topPeaks
+				for index, refPeak := range data.topPeaks {
+					if peak.value < refPeak.value {
+						data.topPeaks = append(data.topPeaks, Peak{})
+						copy(data.topPeaks[index+1:], data.topPeaks[index:])
+						data.topPeaks[index] = peak
+						break
+					}
+				}
+			} else {
+				// insert to topPeaks
+				for index := len(data.topPeaks)-1; index >= 0; index-- {
+					refPeak := data.topPeaks[index]
+					if peak.value > refPeak.value {
+						if index != 0 {
+							copy(
+								data.topPeaks[0:index-1],
+								data.topPeaks[1:index],
+							)
+						}
+						data.topPeaks[index] = peak
+						break
+					}
+				}
+			}
 		}
 		prev = value
 	}
+}
+
+func (data *AggregatedData) maxPeak() Peak {
+	if len(data.topPeaks) == 0 {
+		return Peak{-1, math.Inf(-1)}
+	}
+	return data.topPeaks[len(data.topPeaks)-1]
 }
 
 type AudioData struct {
@@ -296,6 +369,9 @@ func parseArgs(options *Options) {
 	flag.Float64Var(
 		&options.minPeakValue, "min-peak-value", 0.5, "Minimal value to be considered as peak",
 	)
+	flag.IntVar(
+		&options.topPeaks, "top-peaks", 5, "Number of top peaks taken in account",
+	)
 	flag.Parse()
 }
 
@@ -307,7 +383,7 @@ func print_error(error error) {
 
 func init_sdl(options Options, gui *Gui) {
 	var error error
-	if options.debug {
+	if options.debug || options.tune {
 		error = sdl.Init(sdl.INIT_VIDEO)
 		print_error(error)
 		gui.window, error = sdl.CreateWindow(
@@ -316,6 +392,13 @@ func init_sdl(options Options, gui *Gui) {
 		)
 		print_error(error)
 		gui.surface, error = gui.window.GetSurface()
+		print_error(error)
+		if ! ttf.WasInit() {
+			error = ttf.Init()
+			print_error(error)
+		}
+		gui.font, error = ttf.OpenFont("Sans.ttf", 12)
+		print_error(error)
 	}
 	error = sdl.Init(sdl.INIT_AUDIO)
 	print_error(error)
@@ -384,6 +467,7 @@ func mainloop(options Options, gui *Gui) {
 			gui.drawScales()
 			gui.drawPeaks(currentData)
 			gui.drawBars(currentData)
+			gui.printInfo(currentData)
 			gui.flip()
 		}
 		if !options.tune {
