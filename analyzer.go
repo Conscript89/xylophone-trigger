@@ -25,6 +25,7 @@ type Options struct {
 	samples int
 	historySize int
 	interval int
+	minPeakValue float64
 }
 
 type DisplaySettings struct {
@@ -95,15 +96,37 @@ func (gui *Gui) clear() {
 	)
 }
 
-func (gui *Gui) drawBar(index int, value float64) {
-	var barRect sdl.Rect
-	barColor := sdl.Color{255, 255, 0, 0}.Uint32()
+func (gui *Gui) barRect(index int, value float64) sdl.Rect {
+	var rect sdl.Rect
 	barWidth := gui.barWidth()
-	barHeight := (value / gui.settings.maxValue) * (float64)(gui.height)
-	barRect.X = (int32)(index-gui.settings.from) * barWidth
-	barRect.Y = gui.height - (int32)(barHeight)
-	barRect.W = barWidth
-	barRect.H = (int32)(barHeight)
+	barHeight := (int32)((value / gui.settings.maxValue) * (float64)(gui.height))
+	rect.X = (int32)(index-gui.settings.from) * barWidth
+	rect.Y = gui.height - barHeight
+	rect.W = barWidth
+	rect.H = (int32)(barHeight)
+	return rect
+}
+
+const peakHeight = 3
+func (gui *Gui) drawPeak(peak Peak) {
+	peakRect := gui.barRect(peak.index, peak.value)
+	peakColor := sdl.Color{255, 0, 255, 0}.Uint32()
+	peakRect.Y -= peakHeight
+	peakRect.X -= gui.barWidth()
+	peakRect.W = gui.barWidth()*3
+	peakRect.H = peakHeight
+	gui.surface.FillRect(&peakRect, peakColor)
+}
+
+func (gui *Gui) drawPeaks(data *AggregatedData) {
+	for _, peak := range data.peaks {
+		gui.drawPeak(peak)
+	}
+}
+
+func (gui *Gui) drawBar(index int, value float64) {
+	barColor := sdl.Color{255, 255, 0, 0}.Uint32()
+	barRect := gui.barRect(index, value)
 	gui.surface.FillRect(&barRect, barColor)
 }
 
@@ -138,14 +161,19 @@ func (gui *Gui) flip() {
 	gui.window.UpdateSurface()
 }
 
+type Peak struct {
+	index int
+	value float64
+}
+
 type AggregatedData struct {
 	values []float64
-	peaks []int
+	peaks []Peak
 }
 
 func (data *AggregatedData) init(options Options) {
 	data.values = make([]float64, options.samples/2)
-	data.peaks = make([]int, 0, options.samples/2)
+	data.peaks = make([]Peak, 0, options.samples/2)
 }
 
 func (data *AggregatedData) update(src *AudioData) {
@@ -158,9 +186,9 @@ func (data *AggregatedData) update(src *AudioData) {
 	}
 }
 
-func (data *AggregatedData) updatePeaks() {
+func (data *AggregatedData) updatePeaks(minPeakValue float64) {
 	// delete peaks first
-	data.peaks = make([]int, 0, cap(data.peaks))
+	data.peaks = make([]Peak, 0, cap(data.peaks))
 	prev := math.Inf(-1)
 	next := math.Inf(-1)
 	maxIndex := len(data.values)-1
@@ -170,8 +198,8 @@ func (data *AggregatedData) updatePeaks() {
 		} else {
 			next = data.values[i+1]
 		}
-		if value > prev && value > next {
-			data.peaks = append(data.peaks, i)
+		if i >= 1 && value >= minPeakValue && value > prev && value > next {
+			data.peaks = append(data.peaks, Peak{i, value})
 		}
 		prev = value
 	}
@@ -265,6 +293,9 @@ func parseArgs(options *Options) {
 	flag.IntVar(
 		&options.interval, "interval", 10, "Analyze and draw interval",
 	)
+	flag.Float64Var(
+		&options.minPeakValue, "min-peak-value", 0.5, "Minimal value to be considered as peak",
+	)
 	flag.Parse()
 }
 
@@ -345,7 +376,7 @@ func mainloop(options Options, gui *Gui) {
 		// calculate and display if capturing data
 		if capturing {
 			currentData.update(recordData)
-			currentData.updatePeaks()
+			currentData.updatePeaks(options.minPeakValue)
 		}
 		// display when in debug mode
 		if options.debug || options.tune {
