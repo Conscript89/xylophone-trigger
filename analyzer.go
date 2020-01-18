@@ -27,6 +27,50 @@ type Options struct {
 	interval int
 }
 
+type DisplaySettings struct {
+	maxValue float32
+	from int
+	minFrom int
+	to int
+	maxTo int
+}
+
+func (settings *DisplaySettings) init(to int) {
+	settings.maxValue = 100
+	settings.minFrom = 1 // skip DC part
+	settings.from = settings.minFrom
+	settings.maxTo = to
+	settings.to = settings.maxTo
+}
+
+func (settings *DisplaySettings) zoomY(scale float32) {
+	settings.maxValue *= scale
+}
+
+func (settings *DisplaySettings) zoomX(scale float32) {
+	// FIXME: crashing when shifted
+	diff := settings.to - settings.from
+	diff = (int)((float32)(diff) / scale)
+	// diff must be bigger then 3 and smaller then max diff
+	diff = (int)(math.Max((float64)(diff), 3))
+	diff = (int)(math.Min((float64)(diff), (float64)(settings.maxTo - settings.minFrom)))
+	// apply the scale
+	settings.to = settings.from + diff
+}
+
+func (settings *DisplaySettings) shiftX(relativeStep float32) {
+	diff := settings.to - settings.from
+	if relativeStep > 0 {
+		settings.to += (int)((float32)(diff)/relativeStep)
+		settings.to = (int)(math.Min((float64)(settings.to), (float64)(settings.maxTo)))
+		settings.from = settings.to - diff
+	} else {
+		settings.from += (int)((float32)(diff)/relativeStep)
+		settings.from = (int)(math.Max((float64)(settings.from), (float64)(settings.minFrom)))
+		settings.to = settings.from + diff
+	}
+}
+
 type Gui struct {
 	width int32
 	height int32
@@ -54,17 +98,37 @@ func (gui *Gui) drawBar(data *AggregatedData, bars int, index int, maxValue floa
 	gui.surface.FillRect(&barRect, barColor)
 }
 
-const maxDisplayValue = 100
-func (gui *Gui) drawBars(data *AggregatedData) {
-	from := 1 // skip DC part
-	to := len(data.values)
+func (gui *Gui) drawBars(data *AggregatedData, displaySettings DisplaySettings) {
+	from := displaySettings.from
+	to := displaySettings.to
 	bars := to - from
 	for i := from; i < to; i++ {
 		gui.drawBar(
 			data, bars, i-from,
-			(float32)(maxDisplayValue), data.values[i],
+			(float32)(displaySettings.maxValue), data.values[i],
 			false,
 		)
+	}
+}
+
+func (gui *Gui) drawScales(displaySettings DisplaySettings) {
+	var scales = []int32{100, 10, 5, 2}
+	xDiff := displaySettings.to - displaySettings.from
+	var scale int32
+	var scaleRect sdl.Rect
+	scaleColor := sdl.Color{255, 255, 255, 0}.Uint32()
+	for _, potentialScale := range scales {
+		scale = potentialScale
+		if (int32)(xDiff) / potentialScale > 3 {
+			break
+		}
+	}
+	scaleRect.Y = 0
+	scaleRect.W = gui.width / (int32)(xDiff)
+	scaleRect.H = gui.height
+	for x := (int32)(displaySettings.from) % scale; x <= (int32)(xDiff); x += scale {
+		scaleRect.X = x * scaleRect.W
+		gui.surface.FillRect(&scaleRect, scaleColor)
 	}
 }
 
@@ -206,9 +270,12 @@ func init_sdl(options Options, gui *Gui) {
 }
 
 func mainloop(options Options, gui *Gui) {
+	var displaySettings DisplaySettings
 	running := true
 	capturing := true
 	currentData := new(AggregatedData)
+	// initial display configuration
+	displaySettings.init(options.samples/2-1)
 	// start capturing data
 	currentData.init(options)
 	sdl.PauseAudioDevice(recordData.device, !capturing)
@@ -220,16 +287,34 @@ func mainloop(options Options, gui *Gui) {
 				running = false
 				break
 			case *sdl.KeyboardEvent:
-				keyCode := t.Keysym.Sym
 				switch t.State {
 				case sdl.RELEASED:
-					switch string(keyCode) {
-					case "q":
+					switch t.Keysym.Sym {
+					case sdl.K_UP:
+						displaySettings.zoomY(0.75)
+					case sdl.K_DOWN:
+						displaySettings.zoomY(1.25)
+					case sdl.K_EQUALS:
+						fallthrough
+					case sdl.K_KP_PLUS:
+						displaySettings.zoomX(2)
+					case sdl.K_MINUS:
+						fallthrough
+					case sdl.K_KP_MINUS:
+						displaySettings.zoomX(0.5)
+					case sdl.K_RIGHT:
+						displaySettings.shiftX(10)
+					case sdl.K_LEFT:
+						displaySettings.shiftX(-10)
+					case sdl.K_ESCAPE:
+						fallthrough
+					case sdl.K_q:
 						running = false
-						break
-					case " ":
+					case sdl.K_SPACE:
 						capturing = !capturing
 						sdl.PauseAudioDevice(recordData.device, !capturing)
+					default:
+						fmt.Fprintf(os.Stderr, "Unhanled key: '%s'\n", string(t.Keysym.Sym))
 					}
 					break
 				}
@@ -239,7 +324,8 @@ func mainloop(options Options, gui *Gui) {
 		currentData.update(recordData)
 		if options.debug {
 			gui.clear()
-			gui.drawBars(currentData)
+			gui.drawScales(displaySettings)
+			gui.drawBars(currentData, displaySettings)
 			gui.flip()
 		} else {
 			
