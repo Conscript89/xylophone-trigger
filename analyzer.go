@@ -28,7 +28,7 @@ type Options struct {
 }
 
 type DisplaySettings struct {
-	maxValue float32
+	maxValue float64
 	from int
 	minFrom int
 	to int
@@ -43,31 +43,35 @@ func (settings *DisplaySettings) init(to int) {
 	settings.to = settings.maxTo
 }
 
-func (settings *DisplaySettings) zoomY(scale float32) {
+func (settings *DisplaySettings) bars() int {
+	return settings.to - settings.from
+}
+
+func (settings *DisplaySettings) zoomY(scale float64) {
 	settings.maxValue *= scale
 }
 
-func (settings *DisplaySettings) zoomX(scale float32) {
+func (settings *DisplaySettings) zoomX(scale float64) {
 	// FIXME: crashing when shifted
-	diff := settings.to - settings.from
-	diff = (int)((float32)(diff) / scale)
-	// diff must be bigger then 3 and smaller then max diff
-	diff = (int)(math.Max((float64)(diff), 3))
-	diff = (int)(math.Min((float64)(diff), (float64)(settings.maxTo - settings.minFrom)))
+	bars := settings.bars()
+	bars = (int)((float64)(bars) / scale)
+	// bars must be bigger then 3 and smaller then max diff
+	bars = (int)(math.Max((float64)(bars), 3))
+	bars = (int)(math.Min((float64)(bars), (float64)(settings.maxTo - settings.minFrom)))
 	// apply the scale
-	settings.to = settings.from + diff
+	settings.to = settings.from + bars
 }
 
-func (settings *DisplaySettings) shiftX(relativeStep float32) {
-	diff := settings.to - settings.from
+func (settings *DisplaySettings) shiftX(relativeStep float64) {
+	bars := settings.bars()
 	if relativeStep > 0 {
-		settings.to += (int)((float32)(diff)/relativeStep)
+		settings.to += (int)((float64)(bars)/relativeStep)
 		settings.to = (int)(math.Min((float64)(settings.to), (float64)(settings.maxTo)))
-		settings.from = settings.to - diff
+		settings.from = settings.to - bars
 	} else {
-		settings.from += (int)((float32)(diff)/relativeStep)
+		settings.from += (int)((float64)(bars)/relativeStep)
 		settings.from = (int)(math.Max((float64)(settings.from), (float64)(settings.minFrom)))
-		settings.to = settings.from + diff
+		settings.to = settings.from + bars
 	}
 }
 
@@ -76,6 +80,11 @@ type Gui struct {
 	height int32
 	window *sdl.Window
 	surface *sdl.Surface
+	settings DisplaySettings
+}
+
+func (gui *Gui) barWidth() int32 {
+	return gui.width / (int32)(gui.settings.bars())
 }
 
 func (gui *Gui) clear() {
@@ -86,47 +95,40 @@ func (gui *Gui) clear() {
 	)
 }
 
-func (gui *Gui) drawBar(data *AggregatedData, bars int, index int, maxValue float32, value float32, isPeak bool) {
+func (gui *Gui) drawBar(index int, value float64) {
 	var barRect sdl.Rect
 	barColor := sdl.Color{255, 255, 0, 0}.Uint32()
-	barWidth := gui.width / (int32)(bars)
-	barHeight := (value / maxValue) * (float32)(gui.height)
-	barRect.X = (int32)(index) * barWidth
+	barWidth := gui.barWidth()
+	barHeight := (value / gui.settings.maxValue) * (float64)(gui.height)
+	barRect.X = (int32)(index-gui.settings.from) * barWidth
 	barRect.Y = gui.height - (int32)(barHeight)
 	barRect.W = barWidth
 	barRect.H = (int32)(barHeight)
 	gui.surface.FillRect(&barRect, barColor)
 }
 
-func (gui *Gui) drawBars(data *AggregatedData, displaySettings DisplaySettings) {
-	from := displaySettings.from
-	to := displaySettings.to
-	bars := to - from
-	for i := from; i < to; i++ {
-		gui.drawBar(
-			data, bars, i-from,
-			(float32)(displaySettings.maxValue), data.values[i],
-			false,
-		)
+func (gui *Gui) drawBars(data *AggregatedData) {
+	for i := gui.settings.from; i < gui.settings.to; i++ {
+		gui.drawBar(i, data.values[i])
 	}
 }
 
-func (gui *Gui) drawScales(displaySettings DisplaySettings) {
+func (gui *Gui) drawScales() {
 	var scales = []int32{100, 10, 5, 2}
-	xDiff := displaySettings.to - displaySettings.from
+	bars := gui.settings.bars()
 	var scale int32
 	var scaleRect sdl.Rect
 	scaleColor := sdl.Color{255, 255, 255, 0}.Uint32()
 	for _, potentialScale := range scales {
 		scale = potentialScale
-		if (int32)(xDiff) / potentialScale > 3 {
+		if (int32)(bars) / potentialScale > 3 {
 			break
 		}
 	}
 	scaleRect.Y = 0
-	scaleRect.W = gui.width / (int32)(xDiff)
+	scaleRect.W = gui.width / (int32)(bars)
 	scaleRect.H = gui.height
-	for x := -((int32)(displaySettings.from) % scale); x <= (int32)(xDiff); x += scale {
+	for x := -((int32)(gui.settings.from) % scale); x <= (int32)(bars); x += scale {
 		scaleRect.X = x * scaleRect.W
 		gui.surface.FillRect(&scaleRect, scaleColor)
 	}
@@ -137,11 +139,13 @@ func (gui *Gui) flip() {
 }
 
 type AggregatedData struct {
-	values []float32
+	values []float64
+	peaks []int
 }
 
 func (data *AggregatedData) init(options Options) {
-	data.values = make([]float32, options.samples/2)
+	data.values = make([]float64, options.samples/2)
+	data.peaks = make([]int, 0, options.samples/2)
 }
 
 func (data *AggregatedData) update(src *AudioData) {
@@ -151,6 +155,25 @@ func (data *AggregatedData) update(src *AudioData) {
 	// process
 	for i, _ := range(data.values) {
 		data.values[i] = src.avgMagnitudeAt(i)
+	}
+}
+
+func (data *AggregatedData) updatePeaks() {
+	// delete peaks first
+	data.peaks = make([]int, 0, cap(data.peaks))
+	prev := math.Inf(-1)
+	next := math.Inf(-1)
+	maxIndex := len(data.values)-1
+	for i, value := range data.values {
+		if i >= maxIndex {
+			next = math.Inf(-1)
+		} else {
+			next = data.values[i+1]
+		}
+		if value > prev && value > next {
+			data.peaks = append(data.peaks, i)
+		}
+		prev = value
 	}
 }
 
@@ -189,16 +212,16 @@ func (data *AudioData) openRecordDevice(options Options) error {
 	return error
 }
 
-func (data *AudioData) sumMagnitudeAt(index int) float32 {
+func (data *AudioData) sumMagnitudeAt(index int) float64 {
 	var sum float64 = 0
 	for j := 0; j < data.size; j++ {
 		sum += magnitude(data.values[j].Elems[index])
 	}
-	return (float32)(sum)
+	return (float64)(sum)
 }
 
-func (data *AudioData) avgMagnitudeAt(index int) float32 {
-	return data.sumMagnitudeAt(index) / (float32)(data.size)
+func (data *AudioData) avgMagnitudeAt(index int) float64 {
+	return data.sumMagnitudeAt(index) / (float64)(data.size)
 }
 
 //export recordCallback
@@ -270,16 +293,14 @@ func init_sdl(options Options, gui *Gui) {
 }
 
 func mainloop(options Options, gui *Gui) {
-	var displaySettings DisplaySettings
 	running := true
 	capturing := true
 	currentData := new(AggregatedData)
-	// initial display configuration
-	displaySettings.init(options.samples/2-1)
 	// start capturing data
 	currentData.init(options)
 	sdl.PauseAudioDevice(recordData.device, !capturing)
 	for running {
+		// process events
 		sdl.PumpEvents()
 		for event := sdl.PollEvent(); event != nil; event = sdl.PollEvent() {
 			switch t := event.(type) {
@@ -291,21 +312,21 @@ func mainloop(options Options, gui *Gui) {
 				case sdl.RELEASED:
 					switch t.Keysym.Sym {
 					case sdl.K_UP:
-						displaySettings.zoomY(0.75)
+						gui.settings.zoomY(0.75)
 					case sdl.K_DOWN:
-						displaySettings.zoomY(1.25)
+						gui.settings.zoomY(1.25)
 					case sdl.K_EQUALS:
 						fallthrough
 					case sdl.K_KP_PLUS:
-						displaySettings.zoomX(2)
+						gui.settings.zoomX(2)
 					case sdl.K_MINUS:
 						fallthrough
 					case sdl.K_KP_MINUS:
-						displaySettings.zoomX(0.5)
+						gui.settings.zoomX(0.5)
 					case sdl.K_RIGHT:
-						displaySettings.shiftX(10)
+						gui.settings.shiftX(10)
 					case sdl.K_LEFT:
-						displaySettings.shiftX(-10)
+						gui.settings.shiftX(-10)
 					case sdl.K_ESCAPE:
 						fallthrough
 					case sdl.K_q:
@@ -321,13 +342,20 @@ func mainloop(options Options, gui *Gui) {
 				break
 			}
 		}
-		currentData.update(recordData)
-		if options.debug {
+		// calculate and display if capturing data
+		if capturing {
+			currentData.update(recordData)
+			currentData.updatePeaks()
+		}
+		// display when in debug mode
+		if options.debug || options.tune {
 			gui.clear()
-			gui.drawScales(displaySettings)
-			gui.drawBars(currentData, displaySettings)
+			gui.drawScales()
+			gui.drawPeaks(currentData)
+			gui.drawBars(currentData)
 			gui.flip()
-		} else {
+		}
+		if !options.tune {
 			
 		}
 		sdl.Delay((uint32)(options.interval))
@@ -348,6 +376,7 @@ func main() {
 	gui.height = 1000
 	parseArgs(&options)
 	fmt.Printf("Options: %v\n", options)
+	gui.settings.init(options.samples/2-1)
 	recordData = new(AudioData)
 	recordData.init(options)
 	init_sdl(options, &gui)
