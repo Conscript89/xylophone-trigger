@@ -31,19 +31,41 @@ type Gui struct {
 	width int32
 	height int32
 	window *sdl.Window
+	surface *sdl.Surface
 }
 
 func (gui *Gui) clear() {
 	everything := sdl.Rect{0, 0, gui.width, gui.height}
-	surface, _ := gui.window.GetSurface()
-	surface.FillRect(
+	gui.surface.FillRect(
 		&everything,
 		sdl.Color{255, 0, 0, 0}.Uint32(),
 	)
 }
 
+func (gui *Gui) drawBar(data *AggregatedData, bars int, index int, maxValue float32, value float32, isPeak bool) {
+	var barRect sdl.Rect
+	barColor := sdl.Color{255, 255, 0, 0}.Uint32()
+	barWidth := gui.width / (int32)(bars)
+	barHeight := (value / maxValue) * (float32)(gui.height)
+	barRect.X = (int32)(index) * barWidth
+	barRect.Y = gui.height - (int32)(barHeight)
+	barRect.W = barWidth
+	barRect.H = (int32)(barHeight)
+	gui.surface.FillRect(&barRect, barColor)
+}
+
+const maxDisplayValue = 100
 func (gui *Gui) drawBars(data *AggregatedData) {
-	gui.window.UpdateSurface()
+	from := 1 // skip DC part
+	to := len(data.values)
+	bars := to - from
+	for i := from; i < to; i++ {
+		gui.drawBar(
+			data, bars, i-from,
+			(float32)(maxDisplayValue), data.values[i],
+			false,
+		)
+	}
 }
 
 func (gui *Gui) flip() {
@@ -175,6 +197,7 @@ func init_sdl(options Options, gui *Gui) {
 			gui.width, gui.height, 0,
 		)
 		print_error(error)
+		gui.surface, error = gui.window.GetSurface()
 	}
 	error = sdl.Init(sdl.INIT_AUDIO)
 	print_error(error)
@@ -234,7 +257,9 @@ var recordData *AudioData
 
 func main() {
 	var options Options
-	var gui Gui = Gui{2048, 1000, nil}
+	var gui Gui
+	gui.width = 2048
+	gui.height = 1000
 	parseArgs(&options)
 	fmt.Printf("Options: %v\n", options)
 	recordData = new(AudioData)
