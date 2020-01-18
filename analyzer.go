@@ -126,7 +126,7 @@ func (gui *Gui) drawScales(displaySettings DisplaySettings) {
 	scaleRect.Y = 0
 	scaleRect.W = gui.width / (int32)(xDiff)
 	scaleRect.H = gui.height
-	for x := (int32)(displaySettings.from) % scale; x <= (int32)(xDiff); x += scale {
+	for x := -((int32)(displaySettings.from) % scale); x <= (int32)(xDiff); x += scale {
 		scaleRect.X = x * scaleRect.W
 		gui.surface.FillRect(&scaleRect, scaleColor)
 	}
