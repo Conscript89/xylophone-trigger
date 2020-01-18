@@ -249,6 +249,9 @@ func (data *AggregatedData) updatePeaks(minPeakValue float64) {
 						data.topPeaks[index] = peak
 						break
 					}
+					if index == len(data.topPeaks)-1 {
+						data.topPeaks = append(data.topPeaks, peak)
+					}
 				}
 			} else {
 				// insert to topPeaks
