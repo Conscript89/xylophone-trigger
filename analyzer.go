@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"unsafe"
 	"sync"
+	"math"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/jvlmdr/go-fftw/fftw"
 )
@@ -27,9 +28,44 @@ type Options struct {
 }
 
 type Gui struct {
-	width int
-	height int
+	width int32
+	height int32
 	window *sdl.Window
+}
+
+func (gui *Gui) clear() {
+	everything := sdl.Rect{0, 0, gui.width, gui.height}
+	surface, _ := gui.window.GetSurface()
+	surface.FillRect(
+		&everything,
+		sdl.Color{255, 0, 0, 0}.Uint32(),
+	)
+}
+
+func (gui *Gui) drawBars(data *AggregatedData) {
+	gui.window.UpdateSurface()
+}
+
+func (gui *Gui) flip() {
+	gui.window.UpdateSurface()
+}
+
+type AggregatedData struct {
+	values []float32
+}
+
+func (data *AggregatedData) init(options Options) {
+	data.values = make([]float32, options.samples/2)
+}
+
+func (data *AggregatedData) update(src *AudioData) {
+	// locks
+	recordData.mux.Lock()
+	defer recordData.mux.Unlock()
+	// process
+	for i, _ := range(data.values) {
+		data.values[i] = src.avgMagnitudeAt(i)
+	}
 }
 
 type AudioData struct {
@@ -67,6 +103,18 @@ func (data *AudioData) openRecordDevice(options Options) error {
 	return error
 }
 
+func (data *AudioData) sumMagnitudeAt(index int) float32 {
+	var sum float64 = 0
+	for j := 0; j < data.size; j++ {
+		sum += magnitude(data.values[j].Elems[index])
+	}
+	return (float32)(sum)
+}
+
+func (data *AudioData) avgMagnitudeAt(index int) float32 {
+	return data.sumMagnitudeAt(index) / (float32)(data.size)
+}
+
 //export recordCallback
 func recordCallback(userdata unsafe.Pointer, stream *C.Uint8, length C.int) {
 	// locks
@@ -82,6 +130,10 @@ func recordCallback(userdata unsafe.Pointer, stream *C.Uint8, length C.int) {
 	recordData.counter++
 	//fmt.Printf("Data: %v\n", recordData.values.Elems)
 	//fmt.Printf("Test: %v\n", recordData.counter)
+}
+
+func magnitude(item complex128) float64 {
+	return math.Sqrt((float64)(real(item)*real(item) + imag(item)*imag(item)))
 }
 
 func parseArgs(options *Options) {
@@ -113,14 +165,14 @@ func print_error(error error) {
 	}
 }
 
-func init_sdl(options Options, gui Gui) {
+func init_sdl(options Options, gui *Gui) {
 	var error error
 	if options.debug {
 		error = sdl.Init(sdl.INIT_VIDEO)
 		print_error(error)
 		gui.window, error = sdl.CreateWindow(
 			"analyzer", sdl.WINDOWPOS_CENTERED, sdl.WINDOWPOS_CENTERED,
-			(int32)(gui.width), (int32)(gui.height), 0,
+			gui.width, gui.height, 0,
 		)
 		print_error(error)
 	}
@@ -130,10 +182,12 @@ func init_sdl(options Options, gui Gui) {
 	print_error(error)
 }
 
-func mainloop(options Options, gui Gui) {
+func mainloop(options Options, gui *Gui) {
 	running := true
 	capturing := true
+	currentData := new(AggregatedData)
 	// start capturing data
+	currentData.init(options)
 	sdl.PauseAudioDevice(recordData.device, !capturing)
 	for running {
 		sdl.PumpEvents()
@@ -159,6 +213,14 @@ func mainloop(options Options, gui Gui) {
 				break
 			}
 		}
+		currentData.update(recordData)
+		if options.debug {
+			gui.clear()
+			gui.drawBars(currentData)
+			gui.flip()
+		} else {
+			
+		}
 		sdl.Delay((uint32)(options.interval))
 	}
 	// stop capturing data
@@ -168,15 +230,16 @@ func mainloop(options Options, gui Gui) {
 	fmt.Printf("END LOOP\n")
 }
 
-var recordData AudioData
+var recordData *AudioData
 
 func main() {
 	var options Options
 	var gui Gui = Gui{2048, 1000, nil}
 	parseArgs(&options)
 	fmt.Printf("Options: %v\n", options)
+	recordData = new(AudioData)
 	recordData.init(options)
-	init_sdl(options, gui)
-	mainloop(options, gui)
+	init_sdl(options, &gui)
+	mainloop(options, &gui)
 	sdl.Quit()
 }
