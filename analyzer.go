@@ -144,7 +144,7 @@ func (gui *Gui) drawScales() {
 	bars := gui.settings.bars()
 	var scale int32
 	var scaleRect sdl.Rect
-	scaleColor := sdl.Color{255, 255, 255, 0}.Uint32()
+	scaleColor := sdl.Color{255, 0, 0, 255}.Uint32()
 	for _, potentialScale := range scales {
 		scale = potentialScale
 		if (int32)(bars) / potentialScale > 3 {
@@ -157,6 +157,7 @@ func (gui *Gui) drawScales() {
 	for x := -((int32)(gui.settings.from) % scale); x <= (int32)(bars); x += scale {
 		scaleRect.X = x * scaleRect.W
 		gui.surface.FillRect(&scaleRect, scaleColor)
+		gui.printAt(scaleRect, "%d", (int32)(gui.settings.from)+x)
 	}
 }
 
