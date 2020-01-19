@@ -8,6 +8,7 @@ import "C"
 
 import (
 	"os"
+	"io"
 	"errors"
 	"flag"
 	"fmt"
@@ -28,6 +29,8 @@ type Options struct {
 	interval int
 	minPeakValue float64
 	topPeaks int
+	toneFile string
+	tones Tones
 }
 
 type DisplaySettings struct {
@@ -178,6 +181,8 @@ func (gui *Gui) printInfo(data *AggregatedData) {
 	gui.surface.FillRect(&dst, bgColor)
 	dst.X += 5
 	dst.Y += 5
+	dst = gui.printAt(dst, "Known tones: %v", data.tones)
+	dst = gui.printAt(dst, "Detected tones: %v", data.tones.detect(data))
 	dst = gui.printAt(dst, "Peaks: %d", len(data.peaks))
 	dst = gui.printAt(dst, "Max peak: %v", data.maxPeak())
 	dst = gui.printAt(dst, "Top peaks:")
@@ -195,16 +200,72 @@ type Peak struct {
 	value float64
 }
 
+type Tones map[string][]Peak
+func (tones *Tones) load(filename string) {
+	file, _ := os.Open(filename)
+	defer file.Close()
+	var toneName string
+	*tones = make(Tones)
+	for {
+		peak := Peak{-1, math.Inf(-1)}
+		_, err := fmt.Fscanln(file, &toneName, &peak.index, &peak.value)
+		if err == io.EOF {
+			break
+		}
+		(*tones)[toneName] = append((*tones)[toneName], peak)
+	}
+}
+
+func (tones Tones) detect(data *AggregatedData) []string {
+	detected := make([]string, 0, len(tones))
+	for toneName, tone := range tones {
+		present := true
+		for _, peak := range tone {
+			if data.values[peak.index] < peak.value {
+				present = false
+				break
+			}
+		}
+		if present {
+			detected = append(detected, toneName)
+		}
+	}
+	return detected
+}
+
+const toneTimeout = 1000
+type timestampedTones struct {
+	validUntil uint32
+	recorded string
+}
+
+func (tones *timestampedTones) update(current string) bool {
+	ticks := sdl.GetTicks()
+	if tones.recorded != current {
+		tones.recorded = current
+		tones.validUntil = ticks + toneTimeout
+		return true
+	}
+	if ticks > tones.validUntil {
+		tones.validUntil = ticks + toneTimeout
+		return true
+	}
+	return false
+}
+
 type AggregatedData struct {
 	values []float64
 	peaks []Peak
 	topPeaks []Peak
+	tones Tones
+	lastTones timestampedTones
 }
 
 func (data *AggregatedData) init(options Options) {
 	data.values = make([]float64, options.samples/2)
 	data.peaks = make([]Peak, 0, options.samples/2)
 	data.topPeaks = make([]Peak, 0, options.topPeaks)
+	data.tones = options.tones
 }
 
 func (data *AggregatedData) update(src *AudioData) {
@@ -376,7 +437,11 @@ func parseArgs(options *Options) {
 	flag.IntVar(
 		&options.topPeaks, "top-peaks", 5, "Number of top peaks taken in account",
 	)
+	flag.StringVar(
+		&options.toneFile, "tone-file", "config.txt", "File storing tone configuration",
+	)
 	flag.Parse()
+	options.tones.load(options.toneFile)
 }
 
 func print_error(error error) {
@@ -464,6 +529,9 @@ func mainloop(options Options, gui *Gui) {
 		if capturing {
 			currentData.update(recordData)
 			currentData.updatePeaks(options.minPeakValue)
+			if !options.tune && currentData.lastTones.update(fmt.Sprintf("%v", currentData.tones.detect(currentData))) {
+				fmt.Printf("%v\n", currentData.lastTones.recorded)
+			}
 		}
 		// display when in debug mode
 		if options.debug || options.tune {
