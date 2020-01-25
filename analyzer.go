@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"unsafe"
 	"sync"
+	"sort"
 	"math"
 	"github.com/veandco/go-sdl2/sdl"
 	"github.com/veandco/go-sdl2/ttf"
@@ -230,6 +231,7 @@ func (tones Tones) detect(data *AggregatedData) []string {
 			detected = append(detected, toneName)
 		}
 	}
+	sort.Strings(detected)
 	return detected
 }
 
