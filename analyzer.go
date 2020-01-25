@@ -553,7 +553,7 @@ func mainloop(options Options, gui *Gui) {
 	if capturing {
 		sdl.PauseAudioDevice(recordData.device, true)
 	}
-	fmt.Printf("END LOOP\n")
+	fmt.Fprintf(os.Stderr, "END LOOP\n")
 }
 
 var recordData *AudioData
@@ -564,7 +564,7 @@ func main() {
 	gui.width = 2048
 	gui.height = 1000
 	parseArgs(&options)
-	fmt.Printf("Options: %v\n", options)
+	fmt.Fprintf(os.Stderr, "Options: %v\n", options)
 	gui.settings.init(options.samples/2-1)
 	recordData = new(AudioData)
 	recordData.init(options)
