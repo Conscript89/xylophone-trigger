@@ -455,7 +455,7 @@ func print_error(error error) {
 func init_sdl(options Options, gui *Gui) {
 	var error error
 	if options.debug || options.tune {
-		error = sdl.Init(sdl.INIT_VIDEO)
+		error = sdl.Init(sdl.INIT_VIDEO | sdl.INIT_AUDIO)
 		print_error(error)
 		gui.window, error = sdl.CreateWindow(
 			"analyzer", sdl.WINDOWPOS_CENTERED, sdl.WINDOWPOS_CENTERED,
@@ -470,9 +470,10 @@ func init_sdl(options Options, gui *Gui) {
 		}
 		gui.font, error = ttf.OpenFont("Sans.ttf", 12)
 		print_error(error)
+	} else {
+		error = sdl.Init(sdl.INIT_AUDIO)
+		print_error(error)
 	}
-	error = sdl.Init(sdl.INIT_AUDIO)
-	print_error(error)
 	error = recordData.openRecordDevice(options)
 	print_error(error)
 }
