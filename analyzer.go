@@ -221,8 +221,15 @@ func (tones Tones) detect(data *AggregatedData) []string {
 	detected := make([]string, 0, len(tones))
 	for toneName, tone := range tones {
 		present := true
-		for _, peak := range tone {
-			if data.values[peak.index] < peak.value {
+		for _, needPeak := range tone {
+			found := false
+			for _, peak := range data.peaks {
+				if peak.index == needPeak.index {
+					found = true
+					break
+				}
+			}
+			if ! found {
 				present = false
 				break
 			}
@@ -276,8 +283,16 @@ func (data *AggregatedData) update(src *AudioData) {
 	defer recordData.mux.Unlock()
 	// process
 	for i, _ := range(data.values) {
-		data.values[i] = src.avgMagnitudeAt(i)
+		data.values[i] = src.minMagnitudeAt(i)
 	}
+}
+
+func (data *AggregatedData) avgValue() float64 {
+	var sum float64 = 0
+	for _, v := range data.values {
+		sum += v
+	}
+	return sum / (float64)(len(data.values))
 }
 
 func (data *AggregatedData) updatePeaks(minPeakValue float64) {
@@ -289,6 +304,7 @@ func (data *AggregatedData) updatePeaks(minPeakValue float64) {
 	prev := math.Inf(-1)
 	next := math.Inf(-1)
 	maxIndex := len(data.values)-1
+	minPeakValue = data.avgValue() * 5
 	for i := 1; i <= maxIndex; i++ {
 		value = data.values[i]
 		if i >= maxIndex {
@@ -378,6 +394,14 @@ func (data *AudioData) openRecordDevice(options Options) error {
 	want.UserData = nil
 	data.device, error = sdl.OpenAudioDevice("", true, &want, &have, 0)
 	return error
+}
+
+func (data *AudioData) minMagnitudeAt(index int) float64 {
+	var min float64 = math.Inf(1)
+	for j := 0; j < data.size; j++ {
+		min = math.Min(magnitude(data.values[j].Elems[index]), min)
+	}
+	return (float64)(min)
 }
 
 func (data *AudioData) sumMagnitudeAt(index int) float64 {
