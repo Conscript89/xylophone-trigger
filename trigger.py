@@ -43,14 +43,14 @@ def main(*in_args):
     command = functools.partial(subprocess.Popen, args.command_arg)
     data = io.StringIO()
     while True:
-        line = sys.stdin.readline()
-        if line == '':
-            break
         if count >= max_count:
             if args.keep_reading:
                 continue
             else:
                 break
+        line = sys.stdin.readline()
+        if line == '':
+            break
         data.write(line.rstrip('\n'))
         #print('Data:', data.getvalue())
         if regexp.search(data.getvalue()):
